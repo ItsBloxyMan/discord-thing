@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Streamer</title>
+    <style>
+        body { background: #2c2f33; color: white; font-family: sans-serif; text-align: center; padding: 20px; }
+        video { width: 100%; max-width: 400px; border-radius: 10px; border: 2px solid #7289da; }
+        button { padding: 15px 30px; font-size: 1.2rem; background: #7289da; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 10px; }
+        #log { font-family: monospace; font-size: 0.8rem; margin-top: 20px; color: #99aab5; text-align: left; max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <video id="preview" autoplay muted playsinline></video><br>
+    <button id="toggle">START STREAMING</button>
+    <div id="log"></div>
+
+    <script>
+        const WEBHOOK_URL = 'YOUR_DISCORD_WEBHOOK_URL';
+        const MAX_FILE_SIZE = 7.5 * 1024 * 1024; // 7.5MB buffer for safety
+        const CHUNK_TIME = 15000; // Force upload every 15 seconds regardless of size
+
+        let stream, recorder, isRecording = false;
+        const log = (msg) => { document.getElementById('log').innerHTML += `> ${msg}<br>`; };
+
+        async function upload(blob) {
+            if (blob.size < 100) return; // Ignore tiny empty chunks
+            const formData = new FormData();
+            formData.append('file', blob, `stream_${Date.now()}.webm`);
+            
+            log(`Uploading ${Math.round(blob.size/1024)}KB...`);
+            try {
+                await fetch(WEBHOOK_URL, { method: 'POST', body: formData });
+                log("Upload Success.");
+            } catch (e) { log("Upload Failed."); }
+        }
+
+        async function startNewRecorder() {
+            if (!isRecording) return;
+            
+            recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+            let chunks = [];
+
+            recorder.ondataavailable = (e) => chunks.push(e.data);
+            
+            recorder.onstop = () => {
+                const fullBlob = new Blob(chunks, { type: 'video/webm' });
+                upload(fullBlob);
+                if (isRecording) startNewRecorder(); // Cycle to next file
+            };
+
+            recorder.start();
+            // Automatically stop/upload after CHUNK_TIME
+            setTimeout(() => {
+                if (recorder.state === "recording") recorder.stop();
+            }, CHUNK_TIME);
+        }
+
+        document.getElementById('toggle').onclick = async () => {
+            if (!isRecording) {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 1280, height: 720, frameRate: 24 }, 
+                    audio: true 
+                });
+                document.getElementById('preview').srcObject = stream;
+                isRecording = true;
+                document.getElementById('toggle').innerText = "STOP";
+                startNewRecorder();
+            } else {
+                isRecording = false;
+                recorder.stop();
+                stream.getTracks().forEach(t => t.stop());
+                document.getElementById('toggle').innerText = "START";
+            }
+        };
+    </script>
+</body>
+</html>
