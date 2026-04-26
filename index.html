@@ -128,37 +128,36 @@
 
     // --- PC RECEIVER ---
     async function fetchAndAssemble() {
-        const syncBtn = document.getElementById('sync-btn');
-        syncBtn.disabled = true;
-        log("Connecting via AllOrigins stable proxy...");
+    const syncBtn = document.getElementById('sync-btn');
+    syncBtn.disabled = true;
+    log("Connecting via JSONP (CORS Bypass)...");
 
+    // AllOrigins JSONP requires a callback function
+    const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
+    const script = document.createElement('script');
+    
+    // We use a unique callback name to handle the data
+    const callbackName = 'discord_callback_' + Date.now();
+    
+    window[callbackName] = async (response) => {
         try {
-            const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
-            // AllOrigins requires a slightly different approach for Auth headers
-            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
-
-            const response = await fetch(proxyUrl, {
-                // We attempt to pass the header through the proxy
-                headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
-            });
-
-            if (!response.ok) throw new Error("Proxy server unreachable.");
-            const wrapper = await response.json();
-            const messages = JSON.parse(wrapper.contents);
+            // AllOrigins wraps the Discord response in 'contents'
+            const messages = JSON.parse(response.contents);
             
             if (messages.code === 0 || messages.message === "401: Unauthorized") {
                 throw new Error("Discord Token Invalid or No Permissions.");
             }
 
             let dataChunks = [];
-            log("Scanning messages...");
+            log(`Scanning ${messages.length} messages...`);
 
             for (let m of messages) {
                 if (!m.attachments) continue;
                 for (let a of m.attachments) {
                     if (a.filename.startsWith('c_')) {
-                        const fileProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(a.url)}`;
-                        const fileRes = await fetch(fileProxy);
+                        log(`Downloading: ${a.filename}`);
+                        // We fetch the individual JSON file content
+                        const fileRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(a.url)}`);
                         const fileWrapper = await fileRes.json();
                         dataChunks.push(JSON.parse(fileWrapper.contents));
                     }
@@ -166,28 +165,39 @@
             }
 
             if (dataChunks.length === 0) {
-                log("No chunks found. Check 'Message Content Intent' in Dev Portal.");
-                syncBtn.disabled = false;
-                return;
+                log("No chunks found. Check 'Message Content Intent'!");
+            } else {
+                assembleVideo(dataChunks);
             }
-
-            dataChunks.sort((a, b) => a.part - b.part);
-            const binary = dataChunks.map(c => {
-                const s = atob(c.data);
-                const b = new Uint8Array(s.length);
-                for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
-                return b;
-            });
-
-            const v = document.getElementById('final-video');
-            v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
-            v.classList.remove('hidden');
-            log("SUCCESS: Video reconstructed!");
         } catch (e) {
-            log("Error: " + e.message);
+            log("Error processing data: " + e.message);
         } finally {
+            delete window[callbackName];
+            document.body.removeChild(script);
             syncBtn.disabled = false;
         }
+    };
+
+    script.src = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}&callback=${callbackName}`;
+    document.body.appendChild(script);
+}
+
+function assembleVideo(dataChunks) {
+    dataChunks.sort((a, b) => a.part - b.part);
+    log(`Stitching ${dataChunks.length} chunks...`);
+
+    const binary = dataChunks.map(c => {
+        const s = atob(c.data);
+        const b = new Uint8Array(s.length);
+        for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+        return b;
+    });
+
+    const v = document.getElementById('final-video');
+    v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
+    v.classList.remove('hidden');
+    log("SUCCESS: Video reconstructed!");
+}
     }
 </script>
 </body>
