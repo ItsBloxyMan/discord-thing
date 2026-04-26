@@ -3,53 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VidStore 8MB-Safe</title>
+    <title>VidStore Omni v3 (Proxy Fixed)</title>
     <style>
-        :root { --discord: #7289da; --bg: #23272a; --panel: #2c2f33; --text: #ffffff; }
-        body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .container { background: var(--panel); padding: 20px; border-radius: 12px; width: 100%; max-width: 500px; }
-        button { width: 100%; padding: 15px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; color: white; margin-bottom: 10px; }
-        .btn-start { background: #43b581; }
-        .btn-stop { background: #f04747; }
+        :root { --discord: #7289da; --bg: #23272a; --panel: #2c2f33; --text: #ffffff; --green: #43b581; --red: #f04747; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { background: var(--panel); padding: 20px; border-radius: 12px; width: 100%; max-width: 500px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        button { width: 100%; padding: 14px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; color: white; margin-bottom: 10px; transition: 0.2s; }
+        .btn-start { background: var(--green); }
+        .btn-stop { background: var(--red); }
         .btn-sync { background: var(--discord); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
         video { width: 100%; border-radius: 8px; background: #000; margin-top: 10px; }
-        #log { font-family: monospace; font-size: 0.75rem; background: #000; padding: 10px; border-radius: 5px; margin-top: 15px; height: 150px; overflow-y: auto; color: #00ff00; }
+        #log { font-family: monospace; font-size: 0.75rem; background: #000; padding: 10px; border-radius: 5px; margin-top: 15px; height: 160px; overflow-y: auto; color: #00ff00; border: 1px solid #444; }
         .hidden { display: none; }
+        h2 { text-align: center; font-size: 1.2rem; margin-top: 0; color: var(--discord); }
     </style>
 </head>
 <body>
 
 <div class="container">
+    <h2>VIDSTORE OMNI CONTROL</h2>
+    
     <div id="sender-ui">
         <video id="preview" autoplay muted playsinline></video>
         <button id="record-toggle" class="btn-start">START CAPTURE</button>
     </div>
     
-    <hr style="border: 1px solid #444; margin: 20px 0;">
+    <div style="height: 1px; background: #444; margin: 20px 0;"></div>
     
-    <button onclick="fetchAndAssemble()" class="btn-sync">PC: DOWNLOAD & STITCH</button>
+    <button id="sync-btn" onclick="fetchAndAssemble()" class="btn-sync">PC: DOWNLOAD & STITCH</button>
     <video id="final-video" class="hidden" controls></video>
 
-    <div id="log">System Ready...</div>
+    <div id="log">System initialized. Waiting for input...</div>
 </div>
 
 <script>
+    // --- SETTINGS ---
     const WEBHOOK_URL = 'https://discord.com/api/webhooks/1497671483311521862/KfatluGXWN1gq7tH-U13Q4E4_QtwPBLwjy016CJcfLTHdhmifRX7uCFnRzEHeUYLSSRO';
     const BOT_TOKEN = 'MTQ5NzY3MTc1NjU0OTMyNDg1Mg.GopxTB.Skz7-rOHwZwfSR-KncvZecVEMe9BLHUiHt8CoY'; 
     const CHANNEL_ID = '1497671315585368086';
+    const PROXY = "https://corsproxy.io/?";
 
-    // CALCULATED LIMITS FOR DISCORD 8MB
-    // 5.5MB Video + 33% Base64 Overhead = ~7.4MB JSON (Safe)
+    // 5.5MB Video -> ~7.4MB JSON (Safe for Discord 8MB)
     const MAX_VIDEO_BLOB_SIZE = 5.5 * 1024 * 1024; 
-    const MAX_TIME = 8000; // 8 seconds max per chunk
+    const MAX_TIME = 6000; // 6 seconds
 
     let stream, recorder, isRecording = false, chunkCount = 0, currentSessionId = "";
     const log = (m) => { const l = document.getElementById('log'); l.innerHTML += `> ${m}<br>`; l.scrollTop = l.scrollHeight; };
 
+    // --- SENDER CORE ---
     document.getElementById('record-toggle').onclick = async () => {
         if (!isRecording) {
             try {
-                // FORCE 720p @ 30FPS
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { width: 1280, height: 720, frameRate: 30 }, 
                     audio: true 
@@ -80,7 +85,6 @@
     function startCycle() {
         if (!isRecording) return;
 
-        // LOWER BITRATE (2.5 Mbps) to keep file sizes predictable
         recorder = new MediaRecorder(stream, { 
             mimeType: 'video/webm;codecs=vp8',
             videoBitsPerSecond: 2500000 
@@ -93,7 +97,6 @@
             if (e.data.size > 0) {
                 chunks.push(e.data);
                 let currentBlob = new Blob(chunks);
-                // Trigger if 5.5MB reached or 8 seconds passed
                 if (currentBlob.size >= MAX_VIDEO_BLOB_SIZE || (Date.now() - startTime) >= MAX_TIME) {
                     recorder.stop();
                 }
@@ -106,7 +109,7 @@
             if (isRecording) startCycle();
         };
 
-        recorder.start(1000); // Check buffer every second
+        recorder.start(1000); 
     }
 
     async function upload(blob) {
@@ -120,9 +123,9 @@
             formData.append('file', new Blob([JSON.stringify(payload)], {type:'application/json'}), `c_${chunkCount}.json`);
             
             try {
-                const res = await fetch(WEBHOOK_URL, { method: 'POST', body: formData });
-                log(`Sent Part ${chunkCount}: ${Math.round(blob.size/1024)}KB`);
-            } catch (e) { log("Upload Failed"); }
+                await fetch(WEBHOOK_URL, { method: 'POST', body: formData });
+                log(`Part ${chunkCount} Sent (${Math.round(blob.size/1024)}KB)`);
+            } catch (e) { log("Chunk Failed to Send"); }
         };
     }
 
@@ -133,38 +136,60 @@
         return fetch(WEBHOOK_URL, { method: 'POST', body: formData });
     }
 
-    // --- PC RECEIVER ---
+    // --- PC RECEIVER (WITH PROXY) ---
     async function fetchAndAssemble() {
-        log("Fetching messages...");
-        const res = await fetch(`https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`, {
-            headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
-        });
-        const messages = await res.json();
-        let dataChunks = [];
+        const syncBtn = document.getElementById('sync-btn');
+        syncBtn.disabled = true;
+        log("Accessing Discord via Proxy...");
 
-        for (let m of messages) {
-            for (let a of m.attachments) {
-                if (a.filename.startsWith('c_')) {
-                    const d = await fetch(a.url).then(r => r.json());
-                    dataChunks.push(d);
+        try {
+            const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
+            const response = await fetch(PROXY + encodeURIComponent(apiUrl), {
+                headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
+            });
+
+            if (!response.ok) throw new Error("Could not reach Discord.");
+            const messages = await response.json();
+            
+            let dataChunks = [];
+            log("Filtering chunks...");
+
+            for (let m of messages) {
+                if (!m.attachments) continue;
+                for (let a of m.attachments) {
+                    if (a.filename.startsWith('c_')) {
+                        // Download chunk via proxy
+                        const d = await fetch(PROXY + encodeURIComponent(a.url)).then(r => r.json());
+                        dataChunks.push(d);
+                    }
                 }
             }
+
+            if (dataChunks.length === 0) {
+                log("No video chunks found.");
+                syncBtn.disabled = false;
+                return;
+            }
+
+            dataChunks.sort((a, b) => a.part - b.part);
+            log(`Stitching ${dataChunks.length} chunks...`);
+
+            const binary = dataChunks.map(c => {
+                const s = atob(c.data);
+                const b = new Uint8Array(s.length);
+                for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+                return b;
+            });
+
+            const v = document.getElementById('final-video');
+            v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
+            v.classList.remove('hidden');
+            log("SUCCESS: Video reconstructed.");
+        } catch (e) {
+            log("Error: " + e.message);
+        } finally {
+            syncBtn.disabled = false;
         }
-
-        dataChunks.sort((a, b) => a.part - b.part);
-        log(`Merging ${dataChunks.length} chunks...`);
-
-        const binary = dataChunks.map(c => {
-            const s = atob(c.data);
-            const b = new Uint8Array(s.length);
-            for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
-            return b;
-        });
-
-        const v = document.getElementById('final-video');
-        v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
-        v.classList.remove('hidden');
-        log("Ready to watch.");
     }
 </script>
 </body>
