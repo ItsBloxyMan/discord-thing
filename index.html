@@ -137,48 +137,55 @@
     }
 
     // --- PC RECEIVER (WITH PROXY) ---
-    async function fetchAndAssemble() {
+   async function fetchAndAssemble() {
     const syncBtn = document.getElementById('sync-btn');
     syncBtn.disabled = true;
-    log("Requesting data through AllOrigins...");
+    log("Connecting via AllOrigins stable proxy...");
 
     try {
         const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
-        // AllOrigins wraps the response in a JSON object to bypass browser security
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+        // AllOrigins wraps the response to bypass CORS
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}&disableCache=true`;
 
         const response = await fetch(proxyUrl);
-        if (!response.ok) throw new Error("Proxy failed.");
+        if (!response.ok) throw new Error("Proxy server unreachable.");
         
         const wrapper = await response.json();
-        // The real Discord data is inside wrapper.contents, but it's a string
+        if (!wrapper.contents) throw new Error("No data received from proxy.");
+        
+        // Parse the actual Discord JSON string from the wrapper
         const messages = JSON.parse(wrapper.contents);
         
+        if (messages.code === 0 || messages.message === "401: Unauthorized") {
+            throw new Error("Discord Token Invalid or No Permissions.");
+        }
+
         let dataChunks = [];
-        log("Looking for video parts...");
+        log("Scanning messages for video parts...");
 
         for (let m of messages) {
             if (!m.attachments) continue;
             for (let a of m.attachments) {
                 if (a.filename.startsWith('c_')) {
-                    // Download the actual JSON file content
+                    log(`Found part: ${a.filename}`);
+                    // Fetch the file content via proxy as well
                     const fileProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(a.url)}`;
                     const fileRes = await fetch(fileProxy);
                     const fileWrapper = await fileRes.json();
-                    const d = JSON.parse(fileWrapper.contents);
-                    dataChunks.push(d);
+                    dataChunks.push(JSON.parse(fileWrapper.contents));
                 }
             }
         }
 
         if (dataChunks.length === 0) {
-            log("No chunks found. Check your Channel ID.");
+            log("No chunks found. Ensure 'Message Content Intent' is ON in Discord Dev Portal.");
             syncBtn.disabled = false;
             return;
         }
 
+        // Sort, Merge, and Play
         dataChunks.sort((a, b) => a.part - b.part);
-        log(`Assembling ${dataChunks.length} chunks...`);
+        log(`Stitching ${dataChunks.length} chunks...`);
 
         const binary = dataChunks.map(c => {
             const s = atob(c.data);
@@ -190,7 +197,7 @@
         const v = document.getElementById('final-video');
         v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
         v.classList.remove('hidden');
-        log("SUCCESS! Video is ready.");
+        log("SUCCESS: Video reconstructed!");
     } catch (e) {
         log("Error: " + e.message);
         console.error(e);
