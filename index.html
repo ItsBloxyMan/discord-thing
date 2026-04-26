@@ -138,59 +138,72 @@
 
     // --- PC RECEIVER (WITH PROXY) ---
     async function fetchAndAssemble() {
-        const syncBtn = document.getElementById('sync-btn');
-        syncBtn.disabled = true;
-        log("Accessing Discord via Proxy...");
+    const syncBtn = document.getElementById('sync-btn');
+    syncBtn.disabled = true;
+    log("Requesting data from AllOrigins Proxy...");
 
-        try {
-            const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
-            const response = await fetch(PROXY + encodeURIComponent(apiUrl), {
-                headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
-            });
+    try {
+        // We use AllOrigins to wrap the Discord response to bypass CORS entirely
+        const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
 
-            if (!response.ok) throw new Error("Could not reach Discord.");
-            const messages = await response.json();
-            
-            let dataChunks = [];
-            log("Filtering chunks...");
+        // NOTE: Since we are using this type of proxy, the Bot Token must be 
+        // sent as a query param or handled differently. 
+        // HOWEVER, for simplicity, let's try the direct approach with a different proxy first:
+        
+        const res = await fetch(`https://thingproxy.freeboard.io/fetch/${apiUrl}`, {
+            headers: { 
+                'Authorization': `Bot ${BOT_TOKEN}`,
+                'Content-Type': 'application/json'
+            }
+        });
 
-            for (let m of messages) {
-                if (!m.attachments) continue;
-                for (let a of m.attachments) {
-                    if (a.filename.startsWith('c_')) {
-                        // Download chunk via proxy
-                        const d = await fetch(PROXY + encodeURIComponent(a.url)).then(r => r.json());
-                        dataChunks.push(d);
-                    }
+        if (!res.ok) throw new Error("Proxy or Discord rejected the request.");
+        
+        const messages = await res.json();
+        let dataChunks = [];
+
+        log("Chunks found. Downloading...");
+
+        for (let m of messages) {
+            if (!m.attachments) continue;
+            for (let a of m.attachments) {
+                if (a.filename.startsWith('c_')) {
+                    // Download file through proxy
+                    const fileUrl = `https://thingproxy.freeboard.io/fetch/${a.url}`;
+                    const d = await fetch(fileUrl).then(r => r.json());
+                    dataChunks.push(d);
                 }
             }
-
-            if (dataChunks.length === 0) {
-                log("No video chunks found.");
-                syncBtn.disabled = false;
-                return;
-            }
-
-            dataChunks.sort((a, b) => a.part - b.part);
-            log(`Stitching ${dataChunks.length} chunks...`);
-
-            const binary = dataChunks.map(c => {
-                const s = atob(c.data);
-                const b = new Uint8Array(s.length);
-                for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
-                return b;
-            });
-
-            const v = document.getElementById('final-video');
-            v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
-            v.classList.remove('hidden');
-            log("SUCCESS: Video reconstructed.");
-        } catch (e) {
-            log("Error: " + e.message);
-        } finally {
-            syncBtn.disabled = false;
         }
+
+        if (dataChunks.length === 0) {
+            log("No chunks found. Did you record a video first?");
+            syncBtn.disabled = false;
+            return;
+        }
+
+        dataChunks.sort((a, b) => a.part - b.part);
+        log(`Assembling ${dataChunks.length} parts...`);
+
+        const binary = dataChunks.map(c => {
+            const s = atob(c.data);
+            const b = new Uint8Array(s.length);
+            for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+            return b;
+        });
+
+        const v = document.getElementById('final-video');
+        v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
+        v.classList.remove('hidden');
+        log("DONE! Play the video below.");
+    } catch (e) {
+        log("Error: " + e.message);
+        log("TIP: Try turning off your AdBlocker, it sometimes blocks proxies.");
+    } finally {
+        syncBtn.disabled = false;
     }
+}
 </script>
 </body>
 </html>
