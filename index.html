@@ -40,13 +40,12 @@
 <script>
     // --- SETTINGS ---
     const WEBHOOK_URL = 'https://discord.com/api/webhooks/1497671483311521862/KfatluGXWN1gq7tH-U13Q4E4_QtwPBLwjy016CJcfLTHdhmifRX7uCFnRzEHeUYLSSRO';
-    const BOT_TOKEN = 'MTQ5NzY3MTc1NjU0OTMyNDg1Mg.GopxTB.Skz7-rOHwZwfSR-KncvZecVEMe9BLHUiHt8CoY'; 
+    // DO NOT PUSH YOUR REAL TOKEN TO GITHUB - IT WILL BE DEACTIVATED
+    const BOT_TOKEN = 'YOUR_BOT_TOKEN_HERE'; 
     const CHANNEL_ID = '1497671315585368086';
-    const PROXY = "https://corsproxy.io/?";
 
-    // 5.5MB Video -> ~7.4MB JSON (Safe for Discord 8MB)
     const MAX_VIDEO_BLOB_SIZE = 5.5 * 1024 * 1024; 
-    const MAX_TIME = 6000; // 6 seconds
+    const MAX_TIME = 6000; 
 
     let stream, recorder, isRecording = false, chunkCount = 0, currentSessionId = "";
     const log = (m) => { const l = document.getElementById('log'); l.innerHTML += `> ${m}<br>`; l.scrollTop = l.scrollHeight; };
@@ -63,10 +62,8 @@
                 isRecording = true;
                 chunkCount = 0;
                 currentSessionId = "SID-" + Date.now();
-                
                 document.getElementById('record-toggle').innerText = "STOP RECORDING";
                 document.getElementById('record-toggle').className = "btn-stop";
-                
                 log("VIDEO STARTED");
                 await sendStatus("START");
                 startCycle();
@@ -84,15 +81,12 @@
 
     function startCycle() {
         if (!isRecording) return;
-
         recorder = new MediaRecorder(stream, { 
             mimeType: 'video/webm;codecs=vp8',
             videoBitsPerSecond: 2500000 
         });
-
         let chunks = [];
         let startTime = Date.now();
-
         recorder.ondataavailable = (e) => {
             if (e.data.size > 0) {
                 chunks.push(e.data);
@@ -102,13 +96,11 @@
                 }
             }
         };
-
         recorder.onstop = async () => {
             const blob = new Blob(chunks, { type: 'video/webm' });
             if (blob.size > 0) upload(blob);
             if (isRecording) startCycle();
         };
-
         recorder.start(1000); 
     }
 
@@ -118,10 +110,8 @@
         reader.onloadend = async () => {
             const base64 = reader.result.split(',')[1];
             const payload = { type: "DATA", sid: currentSessionId, part: chunkCount++, data: base64 };
-            
             const formData = new FormData();
             formData.append('file', new Blob([JSON.stringify(payload)], {type:'application/json'}), `c_${chunkCount}.json`);
-            
             try {
                 await fetch(WEBHOOK_URL, { method: 'POST', body: formData });
                 log(`Part ${chunkCount} Sent (${Math.round(blob.size/1024)}KB)`);
@@ -136,76 +126,69 @@
         return fetch(WEBHOOK_URL, { method: 'POST', body: formData });
     }
 
-    // --- PC RECEIVER (WITH PROXY) ---
-   async function fetchAndAssemble() {
-    const syncBtn = document.getElementById('sync-btn');
-    syncBtn.disabled = true;
-    log("Connecting via AllOrigins stable proxy...");
+    // --- PC RECEIVER ---
+    async function fetchAndAssemble() {
+        const syncBtn = document.getElementById('sync-btn');
+        syncBtn.disabled = true;
+        log("Connecting via AllOrigins stable proxy...");
 
-    try {
-        const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
-        // AllOrigins wraps the response to bypass CORS
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}&disableCache=true`;
+        try {
+            const apiUrl = `https://discord.com/api/v10/channels/${CHANNEL_ID}/messages?limit=100`;
+            // AllOrigins requires a slightly different approach for Auth headers
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
 
-        const response = await fetch(proxyUrl);
-        if (!response.ok) throw new Error("Proxy server unreachable.");
-        
-        const wrapper = await response.json();
-        if (!wrapper.contents) throw new Error("No data received from proxy.");
-        
-        // Parse the actual Discord JSON string from the wrapper
-        const messages = JSON.parse(wrapper.contents);
-        
-        if (messages.code === 0 || messages.message === "401: Unauthorized") {
-            throw new Error("Discord Token Invalid or No Permissions.");
-        }
+            const response = await fetch(proxyUrl, {
+                // We attempt to pass the header through the proxy
+                headers: { 'Authorization': `Bot ${BOT_TOKEN}` }
+            });
 
-        let dataChunks = [];
-        log("Scanning messages for video parts...");
+            if (!response.ok) throw new Error("Proxy server unreachable.");
+            const wrapper = await response.json();
+            const messages = JSON.parse(wrapper.contents);
+            
+            if (messages.code === 0 || messages.message === "401: Unauthorized") {
+                throw new Error("Discord Token Invalid or No Permissions.");
+            }
 
-        for (let m of messages) {
-            if (!m.attachments) continue;
-            for (let a of m.attachments) {
-                if (a.filename.startsWith('c_')) {
-                    log(`Found part: ${a.filename}`);
-                    // Fetch the file content via proxy as well
-                    const fileProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(a.url)}`;
-                    const fileRes = await fetch(fileProxy);
-                    const fileWrapper = await fileRes.json();
-                    dataChunks.push(JSON.parse(fileWrapper.contents));
+            let dataChunks = [];
+            log("Scanning messages...");
+
+            for (let m of messages) {
+                if (!m.attachments) continue;
+                for (let a of m.attachments) {
+                    if (a.filename.startsWith('c_')) {
+                        const fileProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(a.url)}`;
+                        const fileRes = await fetch(fileProxy);
+                        const fileWrapper = await fileRes.json();
+                        dataChunks.push(JSON.parse(fileWrapper.contents));
+                    }
                 }
             }
-        }
 
-        if (dataChunks.length === 0) {
-            log("No chunks found. Ensure 'Message Content Intent' is ON in Discord Dev Portal.");
+            if (dataChunks.length === 0) {
+                log("No chunks found. Check 'Message Content Intent' in Dev Portal.");
+                syncBtn.disabled = false;
+                return;
+            }
+
+            dataChunks.sort((a, b) => a.part - b.part);
+            const binary = dataChunks.map(c => {
+                const s = atob(c.data);
+                const b = new Uint8Array(s.length);
+                for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+                return b;
+            });
+
+            const v = document.getElementById('final-video');
+            v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
+            v.classList.remove('hidden');
+            log("SUCCESS: Video reconstructed!");
+        } catch (e) {
+            log("Error: " + e.message);
+        } finally {
             syncBtn.disabled = false;
-            return;
         }
-
-        // Sort, Merge, and Play
-        dataChunks.sort((a, b) => a.part - b.part);
-        log(`Stitching ${dataChunks.length} chunks...`);
-
-        const binary = dataChunks.map(c => {
-            const s = atob(c.data);
-            const b = new Uint8Array(s.length);
-            for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
-            return b;
-        });
-
-        const v = document.getElementById('final-video');
-        v.src = URL.createObjectURL(new Blob(binary, { type: 'video/webm' }));
-        v.classList.remove('hidden');
-        log("SUCCESS: Video reconstructed!");
-    } catch (e) {
-        log("Error: " + e.message);
-        console.error(e);
-    } finally {
-        syncBtn.disabled = false;
     }
-}
-}
 </script>
 </body>
 </html>
